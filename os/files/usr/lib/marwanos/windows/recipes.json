@@ -1,0 +1,16 @@
+[
+  {
+    "id": "7zip",
+    "title": "7-Zip",
+    "version": "26.03",
+    "filename": "7z2603-x64.exe",
+    "url": "https://github.com/ip7z/7zip/releases/download/26.03/7z2603-x64.exe",
+    "sha256": "0859c524b8a63551848f0c246abddcb1d0b7b656b0fbfe879f8d85e61a9e6edd",
+    "size": 1661239,
+    "arguments": ["/S", "/D=C:\\PC1\\7-Zip"],
+    "executable": "drive_c/PC1/7-Zip/7zFM.exe",
+    "verify_files": ["drive_c/PC1/7-Zip/7z.dll", "drive_c/PC1/7-Zip/7z.exe"],
+    "input_mode": "pointer",
+    "timeout_seconds": 1800
+  }
+]

@@ -1,0 +1,96 @@
+#!/usr/bin/env bash
+#
+# Start a standalone Windows game -- one that came from GOG, itch, a bundle, or
+# a disc, and that Steam will not install.
+#
+# WHY THIS EXISTS AS A PROGRAM AND NOT AS AN EXEC LINE. apps.tsv's exec column
+# is split on SPACES by installed.gd, so any path with a space in it shears into
+# two argv entries. Windows games are distributed in directories called things
+# like "Hollow Knight", so that is not an edge case, it is the common case. A
+# slug with no spaces goes in the table and the path lookup happens here, where
+# quoting is ordinary.
+#
+# It is also the one place the Windows runtime is named, which is ADR 0012's
+# rule for anything the project might swap: see RUNTIME below.
+#
+#   winrun <slug>
+#
+# The slug is whatever appscan wrote in the id column after `win.`. The mapping
+# from slug to executable is appscan's, published at $INDEX -- this program does
+# not re-derive it, because a slug rule implemented twice is a slug rule that
+# will disagree exactly once and be very hard to see.
+
+set -uo pipefail
+
+TAG=marwanos-winrun
+INDEX="${MARWANOS_WINDOWS_INDEX:-/run/marwanos/windows.tsv}"
+
+info() { printf '<6>%s: %s\n' "$TAG" "$*" >&2; }
+err()  { printf '<3>%s: %s\n' "$TAG" "$*" >&2; }
+
+# THE RUNTIME, AND IT IS THE WHOLE DECISION THIS FILE EXISTS TO ISOLATE.
+#
+# umu-run: Proton outside Steam, which is the only way a Windows game runs with
+# Valve's compatibility work without Valve's client owning the screen. That is
+# the entire point of not being locked to Steam, and it is in the image as a
+# pinned RPM -- see the Containerfile's UMU_VERSION block.
+#
+# The override exists for two real cases rather than as a courtesy: `wine` is in
+# Fedora's own repositories and is what to fall back to if a title behaves worse
+# under Proton, and a bench run needs to be able to swap the runtime without
+# rebuilding an image.
+#
+# FIRST LAUNCH NEEDS A NETWORK. umu downloads a Proton build into the player's
+# home the first time it runs; upstream's design, not this project's choice.
+# A machine that has never been online will fail its first Windows game and
+# succeed afterwards.
+RUNTIME="${MARWANOS_WINDOWS_RUNTIME:-umu-run}"
+
+slug="${1:-}"
+if [ -z "$slug" ]; then
+    err "no game asked for; usage: winrun <slug>"
+    exit 2
+fi
+
+if [ ! -r "$INDEX" ]; then
+    err "no $INDEX -- appscan has not published the Windows library yet"
+    exit 1
+fi
+
+# IFS SET TO A BARE TAB, and the surrounding `while read` idiom is deliberate.
+# Tab is IFS whitespace by default, so an unset IFS would collapse runs of tabs
+# and let an empty column shift every field left -- a trap this repository has
+# already been caught by twice. One explicit separator, two named fields.
+exe=""
+while IFS=$'\t' read -r row_slug row_exe; do
+    [ "$row_slug" = "$slug" ] || continue
+    exe="$row_exe"
+    break
+done < "$INDEX"
+
+if [ -z "$exe" ]; then
+    err "no Windows game with the slug '$slug' in $INDEX"
+    exit 1
+fi
+
+if [ ! -f "$exe" ]; then
+    err "the executable for '$slug' is gone: $exe"
+    exit 1
+fi
+
+if ! command -v "$RUNTIME" >/dev/null 2>&1; then
+    # THE LOUD FAILURE THE SHELL CAN SHOW. The launch seam reports a spawn that
+    # did not happen, and on a machine with no console this line in the journal
+    # is the only explanation anybody will ever get. It names the fix.
+    err "no Windows runtime: '$RUNTIME' is not installed, so '$slug' cannot start"
+    err "the image ships umu-run; set MARWANOS_WINDOWS_RUNTIME to override it"
+    exit 1
+fi
+
+# The game's own directory, because Windows games routinely load data by
+# relative path and starting one from elsewhere is how a title comes up with no
+# textures and no error.
+cd "$(dirname "$exe")" || { err "cannot enter $(dirname "$exe")"; exit 1; }
+
+info "starting '$slug' with $RUNTIME"
+exec "$RUNTIME" "$exe"
