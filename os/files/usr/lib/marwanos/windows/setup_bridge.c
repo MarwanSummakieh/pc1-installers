@@ -236,7 +236,10 @@ static BOOL CALLBACK read_control(HWND hwnd, LPARAM unused) {
             || contains(c.cls, L"Bitmap") || contains(c.cls, L"Bevel") || contains(c.cls, L"Notebook")) {
         free(c.text); return TRUE;
     }
-    else if (_wcsicmp(c.cls, L"Static") && !contains(c.cls, L"StaticText") && !contains(c.cls, L"Label"))
+    /* WiX subclasses Static for its owner-drawn images and other read-only
+     * decoration. It is not an unsupported interactive control. */
+    else if (_wcsicmp(c.cls, L"Static") && _wcsicmp(c.cls, L"ThemeStaticOwnerDraw")
+            && !contains(c.cls, L"StaticText") && !contains(c.cls, L"Label"))
         c.kind = "unsupported";
     c.music = music_button(&c);
     if (c.music) { free(c.text); c.text = _wcsdup(L"Installer music"); }

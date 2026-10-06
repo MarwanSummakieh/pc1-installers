@@ -42,3 +42,31 @@ TEKKEN 8 executable only after a successful installation and integrity check.
 It does not retry or remove a failed install. Its state is published to
 `~/.local/share/marwanos/windows/fresh-tekken-state.json` and its log is
 `~/.local/share/marwanos/windows/logs/local-tekken8-fresh-1791234744-completion.log`.
+
+## Microsoft runtime navigation fix, 2026-10-06
+
+The x86 Microsoft Visual C++ 2015–2022 prerequisite page exposed a
+`ThemeStaticOwnerDraw` logo as an unsupported control. This blocked its standard
+agreement checkbox and Install button, and the unsupported-page rule also
+disabled Close. [WiX's theme implementation](https://github.com/wixtoolset/wix3/blob/develop/src/libs/dutil/thmutil.cpp)
+derives this decoration class from `Static`.
+
+The bridge now treats that class as read-only. The shell also accepts this class
+from a bridge already running, so the current installation need not restart.
+Supported choices stay editable on unsupported pages, and Close remains
+available; genuinely unsupported choices still block advancing. Native disabled
+Install buttons stay disabled until the installer enables them.
+
+Controller fixtures verify Down reaches the agreement after the license reader,
+A toggles its real control, Down reaches enabled Install, and Right reaches
+Close. The full shell/wizard/layout checks and a native static-logo/checkbox/button
+fixture passed. The updated shell and bridge were deployed with backups under
+`/var/tmp/pc1-vc-controller-20261006/backup`, restarting only the shell.
+
+## Game installation completed, 2026-10-06
+
+The installer exited successfully. The completion helper verified all 533 files
+against the supplied MD5 manifest, registered `TEKKEN 8.exe` as
+`managed.local-tekken8-fresh-1791234744`, and published the TEKKEN 8 library card.
+The card was withheld while verification ran, which explains the temporary gap
+between the installer finishing and the home-screen entry appearing.

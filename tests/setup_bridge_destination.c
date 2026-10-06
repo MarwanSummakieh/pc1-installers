@@ -3,6 +3,42 @@
 #include "../os/files/usr/lib/marwanos/windows/setup_bridge.c"
 #undef wmain
 
+static int check_wix_controls(void) {
+    WNDCLASSW cls = {0};
+    if (!GetClassInfoW(NULL, L"Static", &cls)) return 1;
+    cls.hInstance = GetModuleHandleW(NULL);
+    cls.lpszClassName = L"ThemeStaticOwnerDraw";
+    if (!RegisterClassW(&cls)) return 1;
+    HWND parent = CreateWindowW(L"Static", L"Runtime fixture", WS_POPUP | WS_VISIBLE,
+        -10000, -10000, 485, 300, NULL, NULL, NULL, NULL);
+    HWND logo = CreateWindowW(cls.lpszClassName, L"", WS_CHILD | WS_VISIBLE | SS_OWNERDRAW,
+        14, 33, 64, 64, parent, NULL, cls.hInstance, NULL);
+    HWND agreement = CreateWindowW(L"Button", L"I agree to the license terms", WS_CHILD | WS_VISIBLE | BS_AUTOCHECKBOX,
+        14, 227, 457, 29, parent, NULL, NULL, NULL);
+    HWND install = CreateWindowW(L"Button", L"Install", WS_CHILD | WS_VISIBLE | WS_DISABLED,
+        316, 263, 75, 23, parent, NULL, NULL, NULL);
+    HWND close = CreateWindowW(L"Button", L"Close", WS_CHILD | WS_VISIBLE,
+        396, 263, 75, 23, parent, NULL, NULL, NULL);
+    int failed = !parent || !logo || !agreement || !install || !close;
+    count = 0; page = parent;
+    if (!failed) {
+        read_control(logo, 0);
+        failed |= count != 0;
+        read_control(agreement, 0); read_control(install, 0); read_control(close, 0);
+        failed |= count != 3;
+        if (count == 3) {
+            failed |= strcmp(controls[0].kind, "check") || !controls[0].enabled || controls[0].checked;
+            failed |= strcmp(controls[1].kind, "button") || controls[1].enabled;
+            failed |= strcmp(controls[2].kind, "button") || !controls[2].enabled;
+        }
+    }
+    for (int i = 0; i < count; i++) free(controls[i].text);
+    count = 0; page = NULL;
+    DestroyWindow(parent);
+    UnregisterClassW(cls.lpszClassName, cls.hInstance);
+    return failed;
+}
+
 static int check_default(const wchar_t *initial, const wchar_t *expected) {
     HWND edit = CreateWindowW(L"Edit", initial, 0, 0, 0, 200, 30, NULL, NULL, NULL, NULL);
     if (!edit) return 1;
@@ -32,6 +68,7 @@ static int check_default(const wchar_t *initial, const wchar_t *expected) {
 int wmain(void) {
     wcscpy(default_destination, L"C:\\Games");
     int failures = 0;
+    failures += check_wix_controls();
     wchar_t writable[2] = {0};
     if (GetEnvironmentVariableW(L"MARWANOS_SETUP_TEST_WRITABLE", writable, 2) == 1 && writable[0] == L'1') {
         wchar_t temporary[MAX_PATH];
