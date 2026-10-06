@@ -8,6 +8,7 @@ Wine prefixes are compatibility environments, not security sandboxes.
 """
 
 import argparse
+import importlib.util
 import contextlib
 import fcntl
 import hashlib
@@ -35,6 +36,13 @@ RECIPES = Path(os.environ.get("MARWANOS_WINDOWS_RECIPES", str(Path(__file__).wit
 RUNNER = os.environ.get("MARWANOS_WINDOWS_RUNTIME", "umu-run")
 HELPER = str(Path(__file__).resolve())
 ACTIVE = {"queued", "downloading", "verifying", "installing", "removing"}
+
+
+def download_flow():
+    spec = importlib.util.spec_from_file_location('pc1_download_flow', Path(__file__).with_name('download_flow.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def read_json(path, fallback):
@@ -342,6 +350,7 @@ class Manager:
             snapshot = dict(self.state)
         snapshot.update(
             heartbeat=time.time(), library=self.library(), candidates=list(self.sources.values()),
+            downloads=download_flow().refresh(self.base),
             recipes=[{k: r[k] for k in ("id", "title", "version", "filename")} for r in self.recipes.values()],
         )
         atomic_json(self.base / "state.json", snapshot)
@@ -354,6 +363,17 @@ class Manager:
         if not isinstance(request, dict):
             return
         verb = request.get("verb")
+        if verb in {"download", "download-action"}:
+            try:
+                flow = download_flow()
+                root = Path.home() / "Downloads"
+                if verb == "download":
+                    flow.offer(self.base, root, request)
+                else:
+                    flow.action(self.base, root, request.get("download_id"), request.get("action"))
+            except (OSError, ValueError, KeyError, TypeError) as error:
+                self.update(detail=str(error))
+            return
         if verb in {"remove", "discard"}:
             if self.thread is not None and self.thread.is_alive():
                 return
@@ -926,10 +946,12 @@ def local_setup(base, key, source, portable=False, guided=False):
                 signal.signal(sig, handler)
 
 
-def register_local(base, key, choice):
+def register_local(base, key, choice, input_mode="pointer"):
     job_path = base / "jobs" / (key + ".json")
     job = read_json(job_path, {})
     try:
+        if input_mode not in {"pointer", "gamepad", "keys"}:
+            raise InstallError("Choose a supported controller profile.")
         if job.get("status") not in {"select", "failed"}:
             raise InstallError("Finish setup before adding a program.")
         prefix = base / "prefixes" / key
@@ -939,7 +961,9 @@ def register_local(base, key, choice):
             raise InstallError("That program is no longer available. Run setup again.")
         executable = windows_file(job["portable"] if job.get("portable") else prefix / choice)
         entry = {"id": "managed." + key, "recipe_id": key, "title": selected["title"],
-                 "prefix": str(prefix), "executable": str(executable), "input_mode": "pointer",
+                 "prefix": str(prefix), "executable": str(executable),
+                 "input_mode": "" if input_mode == "gamepad" else input_mode,
+                 "kind": "game" if input_mode == "gamepad" else "application",
                  "state": "installed", "subtitle": "Windows app", "icon": application_icon(base, key, executable),
                  "exec": [HELPER, "launch", key], "stop_exec": [HELPER, "stop", key]}
         entry["portable"] = bool(job.get("portable"))
@@ -1049,6 +1073,7 @@ def main():
     parser.add_argument("command", choices=["daemon", "launch", "stop", "setup", "guided", "portable", "register", "remove", "discard", "icon"])
     parser.add_argument("app", nargs="?")
     parser.add_argument("source", nargs="?")
+    parser.add_argument("input_mode", nargs="?", choices=["pointer", "gamepad", "keys"], default="pointer")
     args = parser.parse_args()
     os.umask(0o077)
     if args.command == "daemon":
@@ -1066,7 +1091,7 @@ def main():
         if not re.fullmatch(r"local-[a-z0-9-]+", args.app) or not args.source:
             parser.error("a local attempt identifier and source are required")
         if args.command == "register":
-            return register_local(BASE, args.app, args.source)
+            return register_local(BASE, args.app, args.source, args.input_mode)
         return local_setup(BASE, args.app, args.source, portable=args.command == "portable", guided=args.command == "guided")
     if args.command == "launch":
         return launch(BASE, args.app)

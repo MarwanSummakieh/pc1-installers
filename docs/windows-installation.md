@@ -355,12 +355,29 @@ Steam ownership, real compositor handoff and TV behavior remain target checks.
 
 ## Upgrading a development bench
 
+The 2026-10-06 physical candidate boots the image-owned installer worker with
+bench overrides retired. Its real embedded-browser 7-Zip 26.04 run exposed a
+modeless Close hang: synchronous foreign-thread button activation destroyed the
+dialog but did not advance the installer's GetMessage loop. Native button actions
+now queue BM_CLICK, allowing the installer to return its genuine exit code.
+The real Win32 regression (`tests/setup_bridge_exit.c` and its Python runner)
+reproduces the old windowless active process, checks stale-action rejection and
+requires actual installer/bridge exit zero from the production bridge in an
+isolated UMU-Proton prefix/display. It passed on PC1's installed runtime. The
+final candidate `0be4ae6` also passed the genuine embedded-browser duplicate
+download, guided Install/Close (actual exit zero), explicit app registration,
+confirmed source cleanup and installed-app launch/minimize/same-process
+resume/close cycle. No success is inferred from an empty dialog. See the dated
+[acceptance record](acceptance-20261006.md) for the baked-image retest and hardware
+limits.
+
 The `build` workflow publishes `ghcr.io/marwansummakieh/marwanos:latest` plus
 a dated version tag. Wait for its Push step to succeed, then run
 `sudo bootc upgrade` on the bench. Before rebooting, disable an existing
 `/var/marwanos/dev-shell/marwanos-shell` override by removing its executable bit:
 `sudo chmod a-x /var/marwanos/dev-shell/marwanos-shell` (only if that file exists).
 The session then uses the shell and helper shipped together in the OS image.
-Keep `/var/marwanos/devmode` if development SSH access is still needed.
+Final image acceptance requires `/var/marwanos/devmode` to be absent. The image
+enables SSH separately; that development marker is unnecessary for its checks.
 After `sudo systemctl reboot`, `/usr/share/marwanos/build-info` identifies the
 running build. The old override remains on disk and can be re-enabled explicitly.
