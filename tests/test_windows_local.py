@@ -121,6 +121,20 @@ sys.exit(int(os.getenv('SETUP_EXIT', '0')))
         self.assertTrue(self.source.exists())
         self.assertTrue((self.root / 'setup.bin').exists())
 
+    def test_game_registration_preserves_native_controller_and_marks_history_kind(self):
+        self.assertEqual(self.run_setup().returncode, 0)
+        choice = self.job()['choices'][0]['id']
+        self.assertEqual(manager.register_local(self.base, 'local-test', choice, 'gamepad'), 0)
+        entry = manager.read_json(self.base / 'apps/local-test.json', {})
+        self.assertEqual(entry['input_mode'], '')
+        self.assertEqual(entry['kind'], 'game')
+        self.assertEqual(self.run_setup(key='local-app').returncode, 0)
+        choice = self.job('local-app')['choices'][0]['id']
+        self.assertEqual(manager.register_local(self.base, 'local-app', choice, 'pointer'), 0)
+        entry = manager.read_json(self.base / 'apps/local-app.json', {})
+        self.assertEqual(entry['input_mode'], 'pointer')
+        self.assertEqual(entry['kind'], 'application')
+
     def test_games_mapping_tampering_cannot_delete_another_folder(self):
         self.run_setup()
         prefix = self.base / 'prefixes/local-test'
