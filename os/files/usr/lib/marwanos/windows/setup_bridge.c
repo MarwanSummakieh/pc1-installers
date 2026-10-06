@@ -430,7 +430,17 @@ static void action(const wchar_t *path) {
             } else if (c->accessible) {
                 VARIANT child = {.vt = VT_I4, .lVal = c->child};
                 IAccessible_accDoDefaultAction(c->accessible, child);
-            } else message(c->hwnd, BM_CLICK, 0, 0);
+            } else {
+                /* A modeless installer can destroy its last window from the
+                 * click handler without posting WM_QUIT (7-Zip does this).
+                 * A sent click is handled inside GetMessage, which then keeps
+                 * waiting. A queued click lets its normal loop observe the
+                 * destroyed window and return the actual setup exit status. */
+                if (!PostMessageW(c->hwnd, BM_CLICK, 0, 0)) {
+                    action_error = "Could not activate the setup control. Try again.";
+                    free(utf8); return;
+                }
+            }
             action_error = "";
         } else if (verb == 2 && !strcmp(c->kind, "edit")) {
             int size = MultiByteToWideChar(CP_UTF8, MB_ERR_INVALID_CHARS, utf8, -1, NULL, 0);

@@ -355,6 +355,19 @@ Steam ownership, real compositor handoff and TV behavior remain target checks.
 
 ## Upgrading a development bench
 
+The 2026-10-06 physical candidate boots the image-owned installer worker with
+bench overrides retired. Its real embedded-browser 7-Zip 26.04 run exposed a
+modeless Close hang: synchronous foreign-thread button activation destroyed the
+dialog but did not advance the installer's GetMessage loop. Native button actions
+now queue BM_CLICK, allowing the installer to return its genuine exit code.
+The real Win32 regression (`tests/setup_bridge_exit.c` and its Python runner)
+reproduces the old windowless active process, checks stale-action rejection and
+requires actual installer/bridge exit zero from the production bridge in an
+isolated UMU-Proton prefix/display. It passed on PC1's installed runtime. No
+success is inferred from an empty dialog. See the dated
+[acceptance record](acceptance-20261006.md) for the baked-image retest and hardware
+limits.
+
 The `build` workflow publishes `ghcr.io/marwansummakieh/marwanos:latest` plus
 a dated version tag. Wait for its Push step to succeed, then run
 `sudo bootc upgrade` on the bench. Before rebooting, disable an existing
