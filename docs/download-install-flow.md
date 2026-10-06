@@ -24,3 +24,13 @@ The backend regression covers successful cleanup, failure/cancellation,
 replacement, old jobs, torrent retention, ambiguous paths and foreign links.
 The actual FDM → controller setup → installed game → confirmed cleanup flow
 still requires physical acceptance on PC1's new image.
+
+The final candidate `0be4ae6` passed the actual browser lane on PC1: an official
+7-Zip download saved a numbered duplicate in Downloads, the real guided setup
+and Close exited zero, explicit app registration enabled pointer input, and
+confirmed cleanup removed only that new installer. The installed executable,
+cancelled original, Tekken/FDM hashes and real game history stayed intact.
+The app then launched, minimized, resumed the same process and closed through
+the shell. These actions used keyboard-equivalent events in the controller UI;
+see the [dated acceptance record](acceptance-20261006.md) for identities and the
+remaining physical FDM requirement.
