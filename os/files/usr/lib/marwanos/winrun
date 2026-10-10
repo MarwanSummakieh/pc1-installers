@@ -93,4 +93,4 @@ fi
 cd "$(dirname "$exe")" || { err "cannot enter $(dirname "$exe")"; exit 1; }
 
 info "starting '$slug' with $RUNTIME"
-exec "$RUNTIME" "$exe"
+exec /usr/bin/python3 "${MARWANOS_PROFILES_HELPER:-/usr/lib/marwanos/profiles.py}" run-windows "${MARWANOS_PROFILE_ID:-owner}" "$slug" "$RUNTIME" "$exe"

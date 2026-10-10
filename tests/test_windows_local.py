@@ -1,4 +1,4 @@
-"""General setup uses the session display and explicit library selection."""
+"""General setup publishes clear launch targets and retains ambiguous choices."""
 import importlib.util
 import json
 import os
@@ -48,7 +48,10 @@ if os.getenv('HANG_SETUP'):
     time.sleep(60)
 if os.getenv('EMPTY_SETUP'):
     sys.exit(0)
-for name in ['Program Files/Example/Game.exe', 'Program Files/Example/unins000.exe', 'windows/notepad.exe', 'users/steamuser/AppData/Local/Example/Client.exe']:
+names = ['Program Files/Example/Game.exe', 'Program Files/Example/unins000.exe', 'windows/notepad.exe', 'users/steamuser/AppData/Local/Example/Client.exe']
+if os.getenv('SINGLE_SETUP'):
+    names = ['Games/Fixture Game/Game.exe', 'Games/Fixture Game/unins000.exe', 'Games/Fixture Game/CrashReporter.exe', 'Games/Fixture Game/_Redist/QuickSFV.exe', 'Games/Fixture Game/crashreporter/7za.exe']
+for name in names:
     exe = p / 'drive_c' / name
     exe.parent.mkdir(parents=True, exist_ok=True)
     exe.write_bytes(pathlib.Path(os.environ['FIXTURE_EXE']).read_bytes())
@@ -120,6 +123,79 @@ sys.exit(int(os.getenv('SETUP_EXIT', '0')))
         self.assertFalse(games.exists())
         self.assertTrue(self.source.exists())
         self.assertTrue((self.root / 'setup.bin').exists())
+
+    def test_game_registration_preserves_native_controller_and_marks_history_kind(self):
+        self.assertEqual(self.run_setup().returncode, 0)
+        choice = self.job()['choices'][0]['id']
+        self.assertEqual(manager.register_local(self.base, 'local-test', choice, 'gamepad'), 0)
+        entry = manager.read_json(self.base / 'apps/local-test.json', {})
+        self.assertEqual(entry['input_mode'], '')
+        self.assertEqual(entry['kind'], 'game')
+        self.assertEqual(self.run_setup(key='local-app').returncode, 0)
+        choice = self.job('local-app')['choices'][0]['id']
+        self.assertEqual(manager.register_local(self.base, 'local-app', choice, 'pointer'), 0)
+        entry = manager.read_json(self.base / 'apps/local-app.json', {})
+        self.assertEqual(entry['input_mode'], 'pointer')
+        self.assertEqual(entry['kind'], 'application')
+
+    def test_successful_single_game_is_published_without_selection(self):
+        result = self.run_setup(SINGLE_SETUP='1')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.job()['status'], 'done')
+        entry = manager.read_json(self.base / 'apps/local-test.json', {})
+        self.assertTrue(entry['executable'].endswith('/Fixture Game/Game.exe'))
+        self.assertEqual(entry['kind'], 'game')
+        self.assertEqual(entry['input_mode'], '')
+
+    def test_successful_guided_game_is_published_when_bridge_finishes(self):
+        bridge = self.root / 'bridge.exe'
+        bridge.write_bytes(pe())
+        result = self.run_setup(command='guided', MARWANOS_SETUP_BRIDGE=str(bridge),
+                                SINGLE_SETUP='1', FINISHED_GUIDED='1')
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(self.job()['status'], 'done')
+        self.assertEqual(self.job()['exit_code'], 0)
+        self.assertTrue((self.base / 'apps/local-test.json').is_file())
+
+    def test_failed_single_game_is_not_automatically_published(self):
+        self.run_setup(SINGLE_SETUP='1', SETUP_EXIT='1')
+        self.assertEqual(self.job()['status'], 'failed')
+        self.assertFalse((self.base / 'apps/local-test.json').exists())
+        self.assertEqual(len(self.job()['choices']), 1)
+
+    def test_witcher_prelauncher_and_support_tools_resolve_to_real_game(self):
+        self.run_setup(EMPTY_SETUP='1')
+        prefix = self.base / 'prefixes/local-test'
+        games = self.root / 'Games/local-test'
+        for name in ['REDprelauncher.exe', 'bin/x64_dx12/witcher3.exe',
+                     'bin/x64_dx12/crashreporter/7za.exe', 'bin/x64_dx12/crashreporter/CrashReporter.exe',
+                     'bin/x64_dx12/D3D12_0/D3D12StateObjectCompiler.exe', '_Redist/QuickSFV.EXE']:
+            path = games / name
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_bytes(pe())
+        with patch.object(manager, 'shortcut_target', return_value='drive_c/Games/REDprelauncher.exe'):
+            link = prefix / 'drive_c/users/steamuser/Desktop/The Witcher 3 - Remastered.lnk'
+            link.parent.mkdir(parents=True)
+            link.write_bytes(b'fixture parsed by shortcut_target')
+            choices = manager.local_candidates(prefix)
+            self.assertEqual(len(choices), 2)
+            target = manager.automatic_target(choices)
+            self.assertTrue(target['id'].endswith('/witcher3.exe'))
+            self.assertEqual(target['title'], 'The Witcher 3 - Remastered')
+            job = self.job()
+            job.update(status='select', choices=choices)
+            manager.atomic_json(self.base / 'jobs/local-test.json', job)
+            self.assertEqual(manager.register_local(self.base, 'local-test', target['id'], 'gamepad'), 0)
+            entry = manager.read_json(self.base / 'apps/local-test.json', {})
+            self.assertEqual(entry['title'], target['title'])
+
+    def test_automatic_target_preserves_ambiguity_and_uses_unique_shortcut(self):
+        choices = [{'id': 'Game.exe'}, {'id': 'Editor.exe'}]
+        self.assertIsNone(manager.automatic_target(choices))
+        choices[0]['shortcut'] = True
+        self.assertEqual(manager.automatic_target(choices), choices[0])
+        choices[1]['shortcut'] = True
+        self.assertIsNone(manager.automatic_target(choices))
 
     def test_games_mapping_tampering_cannot_delete_another_folder(self):
         self.run_setup()

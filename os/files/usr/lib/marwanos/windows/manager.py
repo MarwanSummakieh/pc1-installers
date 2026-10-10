@@ -2,12 +2,13 @@
 """PC1's user-owned Windows install worker and managed application launcher.
 
 Recipes provide optional unattended installs on a separate X server. General
-EXE/MSI setup runs as the player on the shell's display, with explicit library
-selection afterwards. Arguments are always passed as arrays, never shell code.
+EXE/MSI setup runs as the player and publishes identifiable programs on completion.
+Ambiguous installations retain explicit selection. Arguments are arrays, never shell code.
 Wine prefixes are compatibility environments, not security sandboxes.
 """
 
 import argparse
+import importlib.util
 import contextlib
 import fcntl
 import hashlib
@@ -35,6 +36,13 @@ RECIPES = Path(os.environ.get("MARWANOS_WINDOWS_RECIPES", str(Path(__file__).wit
 RUNNER = os.environ.get("MARWANOS_WINDOWS_RUNTIME", "umu-run")
 HELPER = str(Path(__file__).resolve())
 ACTIVE = {"queued", "downloading", "verifying", "installing", "removing"}
+
+
+def download_flow():
+    spec = importlib.util.spec_from_file_location('pc1_download_flow', Path(__file__).with_name('download_flow.py'))
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
 
 
 def read_json(path, fallback):
@@ -342,6 +350,7 @@ class Manager:
             snapshot = dict(self.state)
         snapshot.update(
             heartbeat=time.time(), library=self.library(), candidates=list(self.sources.values()),
+            downloads=download_flow().refresh(self.base),
             recipes=[{k: r[k] for k in ("id", "title", "version", "filename")} for r in self.recipes.values()],
         )
         atomic_json(self.base / "state.json", snapshot)
@@ -354,6 +363,17 @@ class Manager:
         if not isinstance(request, dict):
             return
         verb = request.get("verb")
+        if verb in {"download", "download-action"}:
+            try:
+                flow = download_flow()
+                root = Path.home() / "Downloads"
+                if verb == "download":
+                    flow.offer(self.base, root, request)
+                else:
+                    flow.action(self.base, root, request.get("download_id"), request.get("action"))
+            except (OSError, ValueError, KeyError, TypeError) as error:
+                self.update(detail=str(error))
+            return
         if verb in {"remove", "discard"}:
             if self.thread is not None and self.thread.is_alive():
                 return
@@ -757,7 +777,8 @@ def local_candidates(prefix):
     for directory, folders, files in directories:
         relative = Path(directory).relative_to(drive)
         folders[:] = sorted(f for f in folders if not (Path(directory) / f).is_symlink()
-                            and f.lower() not in {"windows", "$recycle.bin", "temp", "installer"})
+                            and f.lower() not in {"windows", "$recycle.bin", "temp", "installer",
+                                "_redist", "_commonredist", "redist", "crashreporter", "d3d12_0"})
         for name in sorted(files):
             path = Path(directory) / name
             if name.lower().endswith(".lnk") and not path.is_symlink() and (
@@ -767,7 +788,8 @@ def local_candidates(prefix):
                 if target:
                     shortcuts.setdefault(target.casefold(), Path(name).stem)
                 continue
-            if not name.lower().endswith(".exe") or re.match(r"(?i)(unins|uninstall|setup|vcredist|vc_redist)", name):
+            if not name.lower().endswith(".exe") or re.match(
+                    r"(?i)(unins|uninstall|setup|vcredist|vc_redist|dxwebsetup|dxsetup|crashreporter|unitycrashhandler)", name):
                 continue
             if path.is_symlink() or not (path.resolve().is_relative_to(drive.resolve()) or
                     (mapped and path.resolve().is_relative_to(games.resolve()))):
@@ -787,7 +809,28 @@ def local_candidates(prefix):
         title = shortcuts.get(candidate["id"].casefold())
         if title:
             candidate.update(title=title, shortcut=True)
+    # A vendor prelauncher can be the shortcut target while the actual game is
+    # nested under bin/. Prefer a unique executable named by that shortcut.
+    # Never choose between unrelated programs or multiple renderer variants.
+    links = [item for item in result if item.get("shortcut")]
+    if len(links) == 1 and "launcher" in Path(links[0]["id"]).stem.casefold():
+        normalize = lambda value: re.sub(r"[^a-z0-9]", "", value.casefold())
+        title = normalize(links[0]["title"])
+        matches = [item for item in result if not item.get("shortcut")
+                   and len(normalize(Path(item["id"]).stem)) >= 4
+                   and normalize(Path(item["id"]).stem) in title]
+        if len(matches) == 1:
+            matches[0].update(title=links[0]["title"], primary=True)
     return sorted(result, key=lambda item: (not item.get("shortcut", False), item["title"].casefold()))
+
+
+def automatic_target(choices):
+    """Use installer shortcuts or one launchable program, never an arbitrary first EXE."""
+    for field in ("primary", "shortcut"):
+        targets = [item for item in choices if item.get(field)]
+        if targets:
+            return targets[0] if len(targets) == 1 else None
+    return choices[0] if len(choices) == 1 else None
 
 
 def inno_installer(path):
@@ -915,6 +958,11 @@ def local_setup(base, key, source, portable=False, guided=False):
                                "No installed program was found. Retry setup, or use Add as portable app for a standalone EXE.")
                 job["exit_code"] = exit_code
                 atomic_json(job_path, job)
+                if not cancelled.is_set() and exit_code in (0, 3010):
+                    target = automatic_target(choices)
+                    if target:
+                        mode = "gamepad" if target["id"].startswith("drive_c/Games/") else "pointer"
+                        return register_local(base, key, target["id"], mode)
                 return 0
         except (OSError, InstallError) as error:
             job.update(status="failed", detail=str(error), choices=[])
@@ -926,10 +974,12 @@ def local_setup(base, key, source, portable=False, guided=False):
                 signal.signal(sig, handler)
 
 
-def register_local(base, key, choice):
+def register_local(base, key, choice, input_mode="pointer"):
     job_path = base / "jobs" / (key + ".json")
     job = read_json(job_path, {})
     try:
+        if input_mode not in {"pointer", "gamepad", "keys"}:
+            raise InstallError("Choose a supported controller profile.")
         if job.get("status") not in {"select", "failed"}:
             raise InstallError("Finish setup before adding a program.")
         prefix = base / "prefixes" / key
@@ -939,7 +989,9 @@ def register_local(base, key, choice):
             raise InstallError("That program is no longer available. Run setup again.")
         executable = windows_file(job["portable"] if job.get("portable") else prefix / choice)
         entry = {"id": "managed." + key, "recipe_id": key, "title": selected["title"],
-                 "prefix": str(prefix), "executable": str(executable), "input_mode": "pointer",
+                 "prefix": str(prefix), "executable": str(executable),
+                 "input_mode": "" if input_mode == "gamepad" else input_mode,
+                 "kind": "game" if input_mode == "gamepad" else "application",
                  "state": "installed", "subtitle": "Windows app", "icon": application_icon(base, key, executable),
                  "exec": [HELPER, "launch", key], "stop_exec": [HELPER, "stop", key]}
         entry["portable"] = bool(job.get("portable"))
@@ -968,6 +1020,15 @@ def launch(base, key):
             (games is not None and executable.resolve().is_relative_to(games.resolve()))):
         raise InstallError("The application's stored program is invalid.")
     with exclusive(base / "running" / (key + ".lock")):
+        profile_path = Path(os.environ.get("MARWANOS_PROFILES_HELPER", str(Path(__file__).resolve().parents[1] / "profiles.py")))
+        spec = importlib.util.spec_from_file_location("pc1_windows_profiles", profile_path)
+        profiles = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(profiles)
+        # AppData-installed executables are part of the install, so cannot be
+        # hidden by switching its users tree. Keep this limitation explicit.
+        if profiles.active_id() != "owner" and executable.is_relative_to(prefix / "drive_c/users"):
+            raise InstallError("This app is installed in a user's save folder. Reinstall it to C:\\Games to share it between users.")
+        profiles.prepare_windows(prefix)
         process = subprocess.Popen([RUNNER, str(executable)], env=runtime_env(Path(entry["prefix"])),
                                    cwd=executable.parent, start_new_session=True)
         running = base / "running" / (key + ".json")
@@ -1049,6 +1110,7 @@ def main():
     parser.add_argument("command", choices=["daemon", "launch", "stop", "setup", "guided", "portable", "register", "remove", "discard", "icon"])
     parser.add_argument("app", nargs="?")
     parser.add_argument("source", nargs="?")
+    parser.add_argument("input_mode", nargs="?", choices=["pointer", "gamepad", "keys"], default="pointer")
     args = parser.parse_args()
     os.umask(0o077)
     if args.command == "daemon":
@@ -1066,7 +1128,7 @@ def main():
         if not re.fullmatch(r"local-[a-z0-9-]+", args.app) or not args.source:
             parser.error("a local attempt identifier and source are required")
         if args.command == "register":
-            return register_local(BASE, args.app, args.source)
+            return register_local(BASE, args.app, args.source, args.input_mode)
         return local_setup(BASE, args.app, args.source, portable=args.command == "portable", guided=args.command == "guided")
     if args.command == "launch":
         return launch(BASE, args.app)

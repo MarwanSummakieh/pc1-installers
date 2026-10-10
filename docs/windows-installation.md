@@ -19,7 +19,16 @@ apps requiring unavailable Windows services remain incompatible.
    **Original Windows setup** remains available for unsupported pages and uses
    the controller pointer; stopping controller setup and choosing Original starts
    a fresh attempt.
-4. After setup exits, choose the installed executable to add to the library.
+4. After successful setup, the helper automatically adds a program identified
+   by a unique Desktop/Start Menu shortcut or a single launchable executable.
+   Crash reporters and bundled runtime installers are excluded. A unique game
+   executable matching a prelauncher's shortcut title is preferred to that
+   prelauncher; installs in the managed Games mapping use native controller input.
+   The card is published during setup completion and home updates on the next
+   half-second installation poll, without reopening Install or rebooting.
+   Ambiguous or interrupted setups with usable programs appear on home as
+   **Finish adding**; select that card to choose the executable and input mode.
+   Failed or cancelled setup never automatically claims an installation succeeded.
    The list scans C: within that attempt, including Program Files and AppData,
    excluding Wine built-ins, linked directories and maintenance executables.
    Files installed outside the managed C: drive are not discovered.
@@ -27,8 +36,7 @@ apps requiring unavailable Windows services remain incompatible.
    target executables first in the list. Only local targets inside that attempt
    are accepted.
 5. Launch the new card. Back from the installation screen restores Files to
-   the same folder. Failed setup does not automatically publish a card; if it
-   left usable executables, explicit selection is still available.
+   the same folder. Pending cards open selection without rerunning setup.
 
 For a standalone EXE, **Add as portable app** creates a card without running
 setup. Keep its original file, folder and any removable drive available.
@@ -123,7 +131,8 @@ advancement. The original wizard is the fallback; this is not universal EXE supp
 The helper tracks preparation as well as the runtime so Stop works during startup.
 When the bridge reports that setup ended, the helper closes its runtime group and
 hidden display even if newly installed Windows services keep Proton waiting.
-Executable discovery and explicit library registration then use the existing flow.
+Executable discovery and automatic library registration then run; ambiguous
+results retain explicit program selection.
 Running guided attempts can be recovered after a shell restart by checking the
 helper's recorded PID and process start time. UI data is removed with its attempt.
 
@@ -355,12 +364,29 @@ Steam ownership, real compositor handoff and TV behavior remain target checks.
 
 ## Upgrading a development bench
 
+The 2026-10-06 physical candidate boots the image-owned installer worker with
+bench overrides retired. Its real embedded-browser 7-Zip 26.04 run exposed a
+modeless Close hang: synchronous foreign-thread button activation destroyed the
+dialog but did not advance the installer's GetMessage loop. Native button actions
+now queue BM_CLICK, allowing the installer to return its genuine exit code.
+The real Win32 regression (`tests/setup_bridge_exit.c` and its Python runner)
+reproduces the old windowless active process, checks stale-action rejection and
+requires actual installer/bridge exit zero from the production bridge in an
+isolated UMU-Proton prefix/display. It passed on PC1's installed runtime. The
+final candidate `0be4ae6` also passed the genuine embedded-browser duplicate
+download, guided Install/Close (actual exit zero), explicit app registration,
+confirmed source cleanup and installed-app launch/minimize/same-process
+resume/close cycle. No success is inferred from an empty dialog. See the dated
+[acceptance record](acceptance-20261006.md) for the baked-image retest and hardware
+limits.
+
 The `build` workflow publishes `ghcr.io/marwansummakieh/marwanos:latest` plus
 a dated version tag. Wait for its Push step to succeed, then run
 `sudo bootc upgrade` on the bench. Before rebooting, disable an existing
 `/var/marwanos/dev-shell/marwanos-shell` override by removing its executable bit:
 `sudo chmod a-x /var/marwanos/dev-shell/marwanos-shell` (only if that file exists).
 The session then uses the shell and helper shipped together in the OS image.
-Keep `/var/marwanos/devmode` if development SSH access is still needed.
+Final image acceptance requires `/var/marwanos/devmode` to be absent. The image
+enables SSH separately; that development marker is unnecessary for its checks.
 After `sudo systemctl reboot`, `/usr/share/marwanos/build-info` identifies the
 running build. The old override remains on disk and can be re-enabled explicitly.
