@@ -1,4 +1,5 @@
 """General setup publishes clear launch targets and retains ambiguous choices."""
+import hashlib
 import importlib.util
 import json
 import os
@@ -96,6 +97,32 @@ sys.exit(int(os.getenv('SETUP_EXIT', '0')))
         self.assertEqual(entry['title'], 'Game')
         self.assertEqual(entry['exec'], [manager.HELPER, 'launch', 'local-test'])
         self.assertEqual(entry['prefix'], str(self.base / 'prefixes/local-test'))
+
+    def profile_store(self, active):
+        store = self.root / '.local/share/marwanos/profiles'
+        store.mkdir(parents=True)
+        (store / 'users.json').write_text(json.dumps({'schema_version': 1, 'active': active, 'users': [
+            {'id': 'owner', 'name': 'Original'}, {'id': 'user-' + 'a' * 32, 'name': 'Alice'}]}))
+        return store
+
+    def test_setup_claims_the_new_prefix_for_the_installing_profile(self):
+        alice = 'user-' + 'a' * 32
+        store = self.profile_store(alice)
+        self.assertEqual(self.run_setup().returncode, 0)
+        prefix = self.base / 'prefixes/local-test'
+        for source in (prefix / 'drive_c/users', prefix / 'user.reg'):
+            digest = hashlib.sha256(str(source.absolute()).encode()).hexdigest()
+            binding = json.loads((store / 'bindings' / (digest + '.json')).read_text())
+            self.assertEqual(binding, {'profile': alice})
+
+    def test_unreadable_profiles_fail_setup_without_running_it(self):
+        store = self.root / '.local/share/marwanos/profiles'
+        store.mkdir(parents=True)
+        (store / 'users.json').write_text('{"schema_version": 1}')
+        self.assertEqual(self.run_setup().returncode, 1)
+        self.assertEqual(self.job()['status'], 'failed')
+        self.assertIn('users.json', self.job()['detail'])
+        self.assertFalse((self.base / 'prefixes/local-test/invocation.json').exists())
 
     def test_games_mapping_discovery_registration_launch_and_removal(self):
         self.assertEqual(self.run_setup().returncode, 0)

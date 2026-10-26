@@ -851,6 +851,14 @@ def inno_installer(path):
     return False
 
 
+def load_profiles():
+    profile_path = Path(os.environ.get("MARWANOS_PROFILES_HELPER", str(Path(__file__).resolve().parents[1] / "profiles.py")))
+    spec = importlib.util.spec_from_file_location("pc1_windows_profiles", profile_path)
+    profiles = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(profiles)
+    return profiles
+
+
 def local_setup(base, key, source, portable=False, guided=False):
     """Called by Launcher in the player session, never by the hidden daemon."""
     job_path = base / "jobs" / (key + ".json")
@@ -874,6 +882,11 @@ def local_setup(base, key, source, portable=False, guided=False):
         try:
             installer = windows_file(source)
             prefix.mkdir(parents=True)
+            # Saves and registry written by setup belong to the installing profile.
+            try:
+                load_profiles().claim_windows(prefix)
+            except ValueError as error:
+                raise InstallError(str(error))
             if portable:
                 if Path(source).suffix.lower() != ".exe":
                     raise InstallError("Portable apps must be EXE files.")
@@ -1020,10 +1033,7 @@ def launch(base, key):
             (games is not None and executable.resolve().is_relative_to(games.resolve()))):
         raise InstallError("The application's stored program is invalid.")
     with exclusive(base / "running" / (key + ".lock")):
-        profile_path = Path(os.environ.get("MARWANOS_PROFILES_HELPER", str(Path(__file__).resolve().parents[1] / "profiles.py")))
-        spec = importlib.util.spec_from_file_location("pc1_windows_profiles", profile_path)
-        profiles = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(profiles)
+        profiles = load_profiles()
         # AppData-installed executables are part of the install, so cannot be
         # hidden by switching its users tree. Keep this limitation explicit.
         if profiles.active_id() != "owner" and executable.is_relative_to(prefix / "drive_c/users"):
